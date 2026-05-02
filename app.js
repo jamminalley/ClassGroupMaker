@@ -10,20 +10,20 @@ const TABLE_H = 130;
 const SEAT_LONG = 80;
 const SEAT_SHORT = 34;
 const SEAT_GAP = 8;
-const TOTAL_W = TABLE_W + (SEAT_SHORT + SEAT_GAP) * 2; // 304
-const TOTAL_H = TABLE_H + (SEAT_SHORT + SEAT_GAP) * 2; // 214
-
-// Aspect ratio of the room frame in each orientation (width / height).
-const ROOM_ASPECTS = { landscape: 1.6, portrait: 0.7 };
-// Target column/row aspect for distributing groups in each orientation.
-const LAYOUT_ASPECTS = { landscape: 2.2, portrait: 0.45 };
+// The room frame is always a landscape rectangle on screen — the
+// "portrait" orientation just rotates the seating *inside* (whiteboard
+// moves to the right, tables are tall instead of wide, layout becomes
+// columns of tables instead of rows).
+const ROOM_ASPECT = 1.6;
 
 // Gaps between tables inside the room, and the room's interior padding.
-const ROOM_PAD_TOP = 36;
-const ROOM_PAD_SIDE = 24;
-const ROOM_PAD_BOTTOM = 24;
+// In portrait mode the whiteboard sits on the right edge instead of the
+// top, so the "padded" side flips.
+const ROOM_PAD_FRONT = 36; // top in landscape, right in portrait
+const ROOM_PAD_OTHER = 24; // the other three sides
 const ROW_GAP = 24;
 const COL_GAP = 16;
+const GRID_FRONT_MARGIN = 18; // tables-grid clearance from the whiteboard
 
 const state = {
   roster: [],
@@ -396,9 +396,10 @@ els.orientationPills.addEventListener("click", (e) => {
   if (!pill) return;
   state.orientation = pill.dataset.value;
   renderOrientationPills();
-  // Re-fit the room and re-render the existing layout in the new shape.
+  // Re-fit the room and re-render in the new orientation. renderClassroom
+  // handles the empty state and updates the grid's orientation class.
   fitRoom();
-  if (state.lastResult) renderClassroom(state.lastResult);
+  renderClassroom(state.lastResult);
 });
 
 // --- partition + assignment ---
@@ -493,10 +494,28 @@ function assignWithConstraints(students, sizes, constraintSets) {
 }
 
 // --- top-down classroom rendering ---
-function seatLayout(n) {
+// Total table-plus-seats footprint, in design units, for each orientation.
+const FOOTPRINT = {
+  landscape: {
+    w: TABLE_W + (SEAT_SHORT + SEAT_GAP) * 2, // 304 — long axis horizontal
+    h: TABLE_H + (SEAT_SHORT + SEAT_GAP) * 2, // 214
+  },
+  portrait: {
+    w: TABLE_H + (SEAT_SHORT + SEAT_GAP) * 2, // 214 — long axis vertical
+    h: TABLE_W + (SEAT_SHORT + SEAT_GAP) * 2, // 304
+  },
+};
+
+function seatLayout(n, orientation) {
   if (n <= 0) return [];
-  const caps = { top: 2, bottom: 2, left: 1, right: 1 };
-  const order = ["top", "bottom", "left", "right"];
+  // Long-side seats hold 2 chairs, short-side seats hold 1. Long sides
+  // are top/bottom in landscape but left/right in portrait.
+  const caps = orientation === "portrait"
+    ? { top: 1, bottom: 1, left: 2, right: 2 }
+    : { top: 2, bottom: 2, left: 1, right: 1 };
+  const order = orientation === "portrait"
+    ? ["left", "right", "top", "bottom"]
+    : ["top", "bottom", "left", "right"];
   const counts = { top: 0, bottom: 0, left: 0, right: 0 };
   let remaining = Math.min(n, 6);
   for (const side of order) {
@@ -516,12 +535,15 @@ function seatLayout(n) {
   return seats;
 }
 
-// Decide cols/rows for the chosen orientation, then distribute groups so
-// the front row (top) has the fewest and the back row(s) absorb the
-// extras — front of class is where the teacher's desk goes.
+// Decide cols/rows for the layout, then distribute groups so the front
+// of the room has the fewest tables and the back absorbs the extras.
+// "Front" is the top in landscape, the right side in portrait.
 function computeGridLayout(numGroups, orientation) {
   if (numGroups <= 0) return { cols: 0, rows: 0, distribution: [] };
-  const target = LAYOUT_ASPECTS[orientation] ?? LAYOUT_ASPECTS.landscape;
+  const fp = FOOTPRINT[orientation];
+  // Pick cols/rows so the resulting grid roughly matches the room
+  // aspect (room is always landscape ≈ 1.6).
+  const target = ROOM_ASPECT / (fp.w / fp.h);
   let bestCols = numGroups;
   let bestRows = 1;
   let bestScore = Infinity;
@@ -535,10 +557,22 @@ function computeGridLayout(numGroups, orientation) {
       bestRows = rows;
     }
   }
+  if (orientation === "portrait") {
+    // Distribution is per-COLUMN, left-to-right. The leftmost columns
+    // are the back of the class (whiteboard is on the right), so the
+    // extras land there.
+    const baseCount = Math.floor(numGroups / bestCols);
+    const extras = numGroups % bestCols;
+    const distribution = [];
+    for (let i = 0; i < bestCols; i++) {
+      distribution.push(i < extras ? baseCount + 1 : baseCount);
+    }
+    return { cols: bestCols, rows: bestRows, distribution };
+  }
+  // Landscape: per-ROW distribution, top-to-bottom. Extras go to the
+  // last (back) rows.
   const baseCount = Math.floor(numGroups / bestRows);
   const extras = numGroups % bestRows;
-  // First (rows - extras) rows take baseCount; the LAST `extras` rows
-  // take baseCount + 1, putting the bigger rows at the back of the room.
   const distribution = [];
   for (let i = 0; i < bestRows; i++) {
     distribution.push(i < bestRows - extras ? baseCount : baseCount + 1);
@@ -547,29 +581,32 @@ function computeGridLayout(numGroups, orientation) {
 }
 
 // Resize the room frame to fit the available page area at the
-// orientation's aspect ratio.
+// landscape aspect (the room is always landscape on screen).
 function fitRoom() {
   const pageBox = els.page.getBoundingClientRect();
-  const padW = 0; // .page already provides padding via CSS
-  const padH = 0;
-  const availW = Math.max(200, pageBox.width - padW);
-  const availH = Math.max(200, pageBox.height - padH);
-  const aspect = ROOM_ASPECTS[state.orientation] ?? ROOM_ASPECTS.landscape;
+  const availW = Math.max(200, pageBox.width);
+  const availH = Math.max(200, pageBox.height);
   let w, h;
-  if (availW / availH > aspect) {
+  if (availW / availH > ROOM_ASPECT) {
     h = availH;
-    w = h * aspect;
+    w = h * ROOM_ASPECT;
   } else {
     w = availW;
-    h = w / aspect;
+    h = w / ROOM_ASPECT;
   }
   els.classroom.style.width = `${Math.floor(w)}px`;
   els.classroom.style.height = `${Math.floor(h)}px`;
+  // Set the orientation class on the room so the whiteboard, padding,
+  // and tables-grid layout switch to the right side / direction.
+  els.classroom.classList.toggle("portrait", state.orientation === "portrait");
+  els.classroom.classList.toggle("landscape", state.orientation !== "portrait");
 }
 
-function renderTable(group, idx, scale) {
-  const tableW = TABLE_W * scale;
-  const tableH = TABLE_H * scale;
+function renderTable(group, idx, scale, orientation) {
+  const isPortrait = orientation === "portrait";
+  // In portrait mode the table is rotated: long axis becomes vertical.
+  const tableW = (isPortrait ? TABLE_H : TABLE_W) * scale;
+  const tableH = (isPortrait ? TABLE_W : TABLE_H) * scale;
   const seatLong = SEAT_LONG * scale;
   const seatShort = SEAT_SHORT * scale;
   const seatGap = SEAT_GAP * scale;
@@ -595,14 +632,15 @@ function renderTable(group, idx, scale) {
   const title = document.createElement("div");
   title.className = "td-table-title";
   title.textContent = `Group ${idx + 1}`;
-  // Title font scales with the table, but stays readable.
-  const titleFontPx = Math.max(11, Math.min(18, tableW * 0.075));
+  // Title font scales with the table's shorter dimension so it stays
+  // proportional whether the table is wide-landscape or tall-portrait.
+  const titleFontPx = Math.max(10, Math.min(16, Math.min(tableW, tableH) * 0.10));
   title.style.fontSize = `${titleFontPx}px`;
 
   surface.appendChild(title);
   wrap.appendChild(surface);
 
-  const layout = seatLayout(group.students.length);
+  const layout = seatLayout(group.students.length, orientation);
   // Seat label font scales with the seat's short dimension.
   const seatFontPx = Math.max(9, Math.min(15, seatShort * 0.42));
   layout.forEach((s, i) => {
@@ -640,6 +678,8 @@ function showEmptyHint() {
 
 function renderClassroom(groups) {
   els.groupsGrid.innerHTML = "";
+  els.groupsGrid.classList.toggle("portrait", state.orientation === "portrait");
+  els.groupsGrid.classList.toggle("landscape", state.orientation !== "portrait");
   if (!groups || groups.length === 0) {
     showEmptyHint();
     return;
@@ -648,28 +688,58 @@ function renderClassroom(groups) {
   // Make sure the room frame is sized before we measure it.
   fitRoom();
 
+  const isPortrait = state.orientation === "portrait";
   const layout = computeGridLayout(groups.length, state.orientation);
+  const fp = FOOTPRINT[state.orientation];
   const roomBox = els.classroom.getBoundingClientRect();
-  const innerW = roomBox.width - ROOM_PAD_SIDE * 2;
-  const innerH = roomBox.height - ROOM_PAD_TOP - ROOM_PAD_BOTTOM - 18; // minus tables-grid top margin
-  // Size cells to fit the widest actual row, not the theoretical column
-  // count — gridDims can pick more cols than any single row uses.
-  const maxItemsPerRow = Math.max(...layout.distribution);
-  const cellW = (innerW - (maxItemsPerRow - 1) * COL_GAP) / maxItemsPerRow;
-  const cellH = (innerH - (layout.rows - 1) * ROW_GAP) / layout.rows;
-  // Cap the upscale so a tiny class doesn't get giant tables.
-  const scale = Math.max(0.35, Math.min(cellW / TOTAL_W, cellH / TOTAL_H, 1.4));
+
+  // Inner area = room minus the per-orientation padding minus the
+  // grid's clearance from the whiteboard.
+  const innerW = roomBox.width
+    - (isPortrait ? ROOM_PAD_OTHER + ROOM_PAD_FRONT : ROOM_PAD_OTHER * 2)
+    - (isPortrait ? GRID_FRONT_MARGIN : 0);
+  const innerH = roomBox.height
+    - (isPortrait ? ROOM_PAD_OTHER * 2 : ROOM_PAD_FRONT + ROOM_PAD_OTHER)
+    - (isPortrait ? 0 : GRID_FRONT_MARGIN);
+
+  // Size cells against the widest/tallest *actual* group of tables —
+  // gridDims may pick more cols than any single row uses.
+  const maxItems = Math.max(...layout.distribution);
+  let cellW, cellH;
+  if (isPortrait) {
+    // distribution is per-column. cols horizontally, max items per col vertically.
+    cellW = (innerW - (layout.cols - 1) * COL_GAP) / layout.cols;
+    cellH = (innerH - (maxItems - 1) * ROW_GAP) / maxItems;
+  } else {
+    cellW = (innerW - (maxItems - 1) * COL_GAP) / maxItems;
+    cellH = (innerH - (layout.rows - 1) * ROW_GAP) / layout.rows;
+  }
+  const scale = Math.max(0.35, Math.min(cellW / fp.w, cellH / fp.h, 1.4));
 
   let groupIdx = 0;
-  layout.distribution.forEach((count) => {
-    const row = document.createElement("div");
-    row.className = "tables-row";
-    for (let i = 0; i < count; i++) {
-      row.appendChild(renderTable(groups[groupIdx], groupIdx, scale));
-      groupIdx++;
-    }
-    els.groupsGrid.appendChild(row);
-  });
+  if (isPortrait) {
+    // Render columns left-to-right; each column is a vertical stack of
+    // tables. Leftmost columns are the "back" of the class.
+    layout.distribution.forEach((count) => {
+      const col = document.createElement("div");
+      col.className = "tables-col";
+      for (let i = 0; i < count; i++) {
+        col.appendChild(renderTable(groups[groupIdx], groupIdx, scale, "portrait"));
+        groupIdx++;
+      }
+      els.groupsGrid.appendChild(col);
+    });
+  } else {
+    layout.distribution.forEach((count) => {
+      const row = document.createElement("div");
+      row.className = "tables-row";
+      for (let i = 0; i < count; i++) {
+        row.appendChild(renderTable(groups[groupIdx], groupIdx, scale, "landscape"));
+        groupIdx++;
+      }
+      els.groupsGrid.appendChild(row);
+    });
+  }
 }
 
 // --- main actions ---
@@ -779,6 +849,8 @@ renderAttendance();
 renderSetList();
 renderEditor();
 fitRoom();
+// Renders the empty hint and tags the grid with the orientation class.
+renderClassroom(null);
 
 // Auto-open setup on first load
 if (document.readyState === "loading") {

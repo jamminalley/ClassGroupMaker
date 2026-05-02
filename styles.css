@@ -113,7 +113,6 @@ body {
   background: var(--bg-room);
   border: 1.5px solid var(--border-strong);
   border-radius: 14px;
-  padding: 36px 24px 24px;
   box-shadow: inset 0 0 0 6px var(--bg-page);
   display: flex;
   flex-direction: column;
@@ -123,12 +122,11 @@ body {
   max-width: 100%;
   max-height: 100%;
 }
+.room.landscape { padding: 36px 24px 24px; }
+.room.portrait { padding: 24px 36px 24px 24px; }
+
 .whiteboard {
   position: absolute;
-  top: 14px;
-  left: 10%;
-  right: 10%;
-  height: 18px;
   background: linear-gradient(to bottom, oklch(0.97 0.01 200), oklch(0.92 0.012 200));
   border: 1.5px solid oklch(0.78 0.02 200);
   border-radius: 4px;
@@ -140,18 +138,45 @@ body {
   color: oklch(0.5 0.02 200);
   text-transform: uppercase;
 }
+.room.landscape .whiteboard {
+  top: 14px;
+  left: 10%;
+  right: 10%;
+  height: 18px;
+}
+.room.portrait .whiteboard {
+  top: 10%;
+  bottom: 10%;
+  right: 14px;
+  width: 18px;
+  /* Vertical text reads top-to-bottom; characters stay upright per
+     Latin convention via the default text-orientation. */
+  writing-mode: vertical-rl;
+  background: linear-gradient(to right, oklch(0.97 0.01 200), oklch(0.92 0.012 200));
+}
 
-/* Tables grid: explicit rows so we can place fewer groups in the front
-   row (top) than the back. Each row's items are centered horizontally. */
+/* Tables grid: rows in landscape, columns in portrait. The "front" of
+   the room sits at the top in landscape and on the right in portrait,
+   so the grid's spacing direction (justify-content: space-between)
+   spreads the front-to-back axis evenly. */
 .tables-grid {
   flex: 1;
   display: flex;
+  min-height: 0;
+}
+.tables-grid.landscape {
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
   gap: 24px;
   margin-top: 18px;
-  min-height: 0;
+}
+.tables-grid.portrait {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-right: 18px;
 }
 .tables-row {
   display: flex;
@@ -160,13 +185,20 @@ body {
   gap: 16px;
   flex-shrink: 0;
 }
+.tables-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 24px;
+  flex-shrink: 0;
+}
 
 .empty-hint {
-  width: 100%;
+  margin: auto;
   text-align: center;
   color: var(--ink-muted);
   font-size: 14px;
-  margin-top: 60px;
 }
 .empty-hint p { margin: 0.25rem 0; }
 
