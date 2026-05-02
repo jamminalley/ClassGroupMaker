@@ -46,6 +46,10 @@ function parseRoster(text) {
   return text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
 
+function sortedRoster() {
+  return state.roster.slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
 function shuffle(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -58,7 +62,7 @@ function shuffle(arr) {
 // --- attendance ---
 function renderAttendance() {
   els.attendanceList.innerHTML = "";
-  state.roster.forEach((name, i) => {
+  sortedRoster().forEach((name, i) => {
     const id = `student-${i}`;
     const label = document.createElement("label");
     label.htmlFor = id;
@@ -145,7 +149,7 @@ function renderConstraintSets() {
 
     const chips = document.createElement("div");
     chips.className = "cs-chips";
-    state.roster.forEach((name) => {
+    sortedRoster().forEach((name) => {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "cs-chip";

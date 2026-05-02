@@ -29,7 +29,9 @@
   <dialog id="setup-dialog" class="setup-dialog">
     <header class="dialog-header">
       <h2>Setup</h2>
-      <button type="button" class="close-btn" id="close-setup-btn" aria-label="Close">&times;</button>
+      <form method="dialog" class="dialog-close-form">
+        <button type="submit" class="close-btn" id="close-setup-btn" aria-label="Close">&times;</button>
+      </form>
     </header>
 
     <div class="dialog-body">
@@ -80,7 +82,9 @@
     </div>
 
     <footer class="dialog-footer">
-      <button type="button" class="secondary" id="close-setup-footer-btn">Close</button>
+      <form method="dialog" class="dialog-close-form">
+        <button type="submit" class="secondary" id="close-setup-footer-btn">Close</button>
+      </form>
       <button type="button" class="primary" id="make-groups-btn">Make groups</button>
     </footer>
   </dialog>

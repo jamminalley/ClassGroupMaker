@@ -195,6 +195,8 @@ button:disabled {
   margin: 0;
   font-size: 1.15rem;
 }
+.dialog-close-form { display: contents; }
+
 .close-btn {
   background: transparent;
   border: none;
