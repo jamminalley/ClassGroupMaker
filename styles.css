@@ -174,7 +174,7 @@ body {
 .tables-grid.portrait {
   flex-direction: row;
   justify-content: space-between;
-  align-items: center;
+  align-items: stretch;
   gap: 16px;
   margin-right: 18px;
 }
@@ -188,7 +188,7 @@ body {
 .tables-col {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: space-between;
   align-items: center;
   gap: 24px;
   flex-shrink: 0;
