@@ -3,15 +3,27 @@
 // Per-group hue rotation from the design handoff.
 const GROUP_HUES = [30, 220, 145, 350, 280, 70, 190];
 
-// Table + seat geometry. The wrapper is sized to leave room for chair
-// tiles on every side.
+// Base table + seat geometry (in design units). The actual rendered size
+// is `unit * scale` where scale is computed to fit the room.
 const TABLE_W = 220;
 const TABLE_H = 130;
 const SEAT_LONG = 80;
 const SEAT_SHORT = 34;
 const SEAT_GAP = 8;
-const TOTAL_W = TABLE_W + (SEAT_SHORT + SEAT_GAP) * 2;
-const TOTAL_H = TABLE_H + (SEAT_SHORT + SEAT_GAP) * 2;
+const TOTAL_W = TABLE_W + (SEAT_SHORT + SEAT_GAP) * 2; // 304
+const TOTAL_H = TABLE_H + (SEAT_SHORT + SEAT_GAP) * 2; // 214
+
+// Aspect ratio of the room frame in each orientation (width / height).
+const ROOM_ASPECTS = { landscape: 1.6, portrait: 0.7 };
+// Target column/row aspect for distributing groups in each orientation.
+const LAYOUT_ASPECTS = { landscape: 2.2, portrait: 0.45 };
+
+// Gaps between tables inside the room, and the room's interior padding.
+const ROOM_PAD_TOP = 36;
+const ROOM_PAD_SIDE = 24;
+const ROOM_PAD_BOTTOM = 24;
+const ROW_GAP = 24;
+const COL_GAP = 16;
 
 const state = {
   roster: [],
@@ -19,6 +31,7 @@ const state = {
   constraintSets: [],     // [{ id, name, hue, members: Set<name> }]
   activeSetId: null,
   groupSize: "4-5",       // value of the active size pill
+  orientation: "landscape",
   lastResult: null,       // [{ hue, students: [name, ...] }, ...]
   activeTab: 0,
 };
@@ -50,6 +63,8 @@ const els = {
   addSetBtn: document.getElementById("add-set-btn"),
   constraintsEditor: document.getElementById("constraints-editor"),
   sizePills: document.getElementById("size-pills"),
+  orientationPills: document.getElementById("orientation-pills"),
+  page: document.querySelector(".page"),
 
   groupingError: document.getElementById("grouping-error"),
   makeGroupsBtn: document.getElementById("make-groups-btn"),
@@ -371,6 +386,21 @@ els.sizePills.addEventListener("click", (e) => {
   renderSizePills();
 });
 
+function renderOrientationPills() {
+  Array.from(els.orientationPills.querySelectorAll(".size-pill")).forEach((pill) => {
+    pill.classList.toggle("active", pill.dataset.value === state.orientation);
+  });
+}
+els.orientationPills.addEventListener("click", (e) => {
+  const pill = e.target.closest(".size-pill");
+  if (!pill) return;
+  state.orientation = pill.dataset.value;
+  renderOrientationPills();
+  // Re-fit the room and re-render the existing layout in the new shape.
+  fitRoom();
+  if (state.lastResult) renderClassroom(state.lastResult);
+});
+
 // --- partition + assignment ---
 function partitionSizes(n, min, max) {
   if (n <= 0 || min > max || n < min) return null;
@@ -486,11 +516,70 @@ function seatLayout(n) {
   return seats;
 }
 
-function renderTable(group, idx) {
+// Decide cols/rows for the chosen orientation, then distribute groups so
+// the front row (top) has the fewest and the back row(s) absorb the
+// extras — front of class is where the teacher's desk goes.
+function computeGridLayout(numGroups, orientation) {
+  if (numGroups <= 0) return { cols: 0, rows: 0, distribution: [] };
+  const target = LAYOUT_ASPECTS[orientation] ?? LAYOUT_ASPECTS.landscape;
+  let bestCols = numGroups;
+  let bestRows = 1;
+  let bestScore = Infinity;
+  for (let cols = 1; cols <= numGroups; cols++) {
+    const rows = Math.ceil(numGroups / cols);
+    const aspect = cols / rows;
+    const score = Math.abs(Math.log(aspect / target));
+    if (score < bestScore) {
+      bestScore = score;
+      bestCols = cols;
+      bestRows = rows;
+    }
+  }
+  const baseCount = Math.floor(numGroups / bestRows);
+  const extras = numGroups % bestRows;
+  // First (rows - extras) rows take baseCount; the LAST `extras` rows
+  // take baseCount + 1, putting the bigger rows at the back of the room.
+  const distribution = [];
+  for (let i = 0; i < bestRows; i++) {
+    distribution.push(i < bestRows - extras ? baseCount : baseCount + 1);
+  }
+  return { cols: bestCols, rows: bestRows, distribution };
+}
+
+// Resize the room frame to fit the available page area at the
+// orientation's aspect ratio.
+function fitRoom() {
+  const pageBox = els.page.getBoundingClientRect();
+  const padW = 0; // .page already provides padding via CSS
+  const padH = 0;
+  const availW = Math.max(200, pageBox.width - padW);
+  const availH = Math.max(200, pageBox.height - padH);
+  const aspect = ROOM_ASPECTS[state.orientation] ?? ROOM_ASPECTS.landscape;
+  let w, h;
+  if (availW / availH > aspect) {
+    h = availH;
+    w = h * aspect;
+  } else {
+    w = availW;
+    h = w / aspect;
+  }
+  els.classroom.style.width = `${Math.floor(w)}px`;
+  els.classroom.style.height = `${Math.floor(h)}px`;
+}
+
+function renderTable(group, idx, scale) {
+  const tableW = TABLE_W * scale;
+  const tableH = TABLE_H * scale;
+  const seatLong = SEAT_LONG * scale;
+  const seatShort = SEAT_SHORT * scale;
+  const seatGap = SEAT_GAP * scale;
+  const totalW = tableW + (seatShort + seatGap) * 2;
+  const totalH = tableH + (seatShort + seatGap) * 2;
+
   const wrap = document.createElement("div");
   wrap.className = "td-table";
-  wrap.style.width = `${TOTAL_W}px`;
-  wrap.style.height = `${TOTAL_H}px`;
+  wrap.style.width = `${totalW}px`;
+  wrap.style.height = `${totalH}px`;
   wrap.style.setProperty("--td-tint", `oklch(0.94 0.05 ${group.hue})`);
   wrap.style.setProperty("--td-edge", `oklch(0.78 0.09 ${group.hue})`);
   wrap.style.setProperty("--td-ink", `oklch(0.3 0.06 ${group.hue})`);
@@ -498,41 +587,42 @@ function renderTable(group, idx) {
 
   const surface = document.createElement("div");
   surface.className = "td-table-surface";
-  surface.style.left = `${SEAT_SHORT + SEAT_GAP}px`;
-  surface.style.top = `${SEAT_SHORT + SEAT_GAP}px`;
-  surface.style.width = `${TABLE_W}px`;
-  surface.style.height = `${TABLE_H}px`;
+  surface.style.left = `${seatShort + seatGap}px`;
+  surface.style.top = `${seatShort + seatGap}px`;
+  surface.style.width = `${tableW}px`;
+  surface.style.height = `${tableH}px`;
 
   const title = document.createElement("div");
   title.className = "td-table-title";
   title.textContent = `Group ${idx + 1}`;
-
-  const meta = document.createElement("div");
-  meta.className = "td-table-meta";
-  meta.textContent = `${String(idx + 1).padStart(2, "0")} · ${group.students.length} ${group.students.length === 1 ? "seat" : "seats"}`;
+  // Title font scales with the table, but stays readable.
+  const titleFontPx = Math.max(11, Math.min(18, tableW * 0.075));
+  title.style.fontSize = `${titleFontPx}px`;
 
   surface.appendChild(title);
-  surface.appendChild(meta);
   wrap.appendChild(surface);
 
   const layout = seatLayout(group.students.length);
+  // Seat label font scales with the seat's short dimension.
+  const seatFontPx = Math.max(9, Math.min(15, seatShort * 0.42));
   layout.forEach((s, i) => {
     const seat = document.createElement("div");
     seat.className = "td-seat";
     if (s.side === "left" || s.side === "right") {
       seat.classList.add("vertical", s.side);
-      seat.style.width = `${SEAT_SHORT}px`;
-      seat.style.height = `${SEAT_LONG}px`;
-      seat.style.top = `${(SEAT_SHORT + SEAT_GAP) + s.t * TABLE_H - SEAT_LONG / 2}px`;
-      seat.style.left = s.side === "left" ? "0" : `${TOTAL_W - SEAT_SHORT}px`;
+      seat.style.width = `${seatShort}px`;
+      seat.style.height = `${seatLong}px`;
+      seat.style.top = `${(seatShort + seatGap) + s.t * tableH - seatLong / 2}px`;
+      seat.style.left = s.side === "left" ? "0" : `${totalW - seatShort}px`;
     } else {
-      seat.style.width = `${SEAT_LONG}px`;
-      seat.style.height = `${SEAT_SHORT}px`;
-      seat.style.left = `${(SEAT_SHORT + SEAT_GAP) + s.t * TABLE_W - SEAT_LONG / 2}px`;
-      seat.style.top = s.side === "top" ? "0" : `${TOTAL_H - SEAT_SHORT}px`;
+      seat.style.width = `${seatLong}px`;
+      seat.style.height = `${seatShort}px`;
+      seat.style.left = `${(seatShort + seatGap) + s.t * tableW - seatLong / 2}px`;
+      seat.style.top = s.side === "top" ? "0" : `${totalH - seatShort}px`;
     }
     const label = document.createElement("span");
     label.textContent = group.students[i] || "";
+    label.style.fontSize = `${seatFontPx}px`;
     seat.appendChild(label);
     wrap.appendChild(seat);
   });
@@ -554,8 +644,31 @@ function renderClassroom(groups) {
     showEmptyHint();
     return;
   }
-  groups.forEach((g, i) => {
-    els.groupsGrid.appendChild(renderTable(g, i));
+
+  // Make sure the room frame is sized before we measure it.
+  fitRoom();
+
+  const layout = computeGridLayout(groups.length, state.orientation);
+  const roomBox = els.classroom.getBoundingClientRect();
+  const innerW = roomBox.width - ROOM_PAD_SIDE * 2;
+  const innerH = roomBox.height - ROOM_PAD_TOP - ROOM_PAD_BOTTOM - 18; // minus tables-grid top margin
+  // Size cells to fit the widest actual row, not the theoretical column
+  // count — gridDims can pick more cols than any single row uses.
+  const maxItemsPerRow = Math.max(...layout.distribution);
+  const cellW = (innerW - (maxItemsPerRow - 1) * COL_GAP) / maxItemsPerRow;
+  const cellH = (innerH - (layout.rows - 1) * ROW_GAP) / layout.rows;
+  // Cap the upscale so a tiny class doesn't get giant tables.
+  const scale = Math.max(0.35, Math.min(cellW / TOTAL_W, cellH / TOTAL_H, 1.4));
+
+  let groupIdx = 0;
+  layout.distribution.forEach((count) => {
+    const row = document.createElement("div");
+    row.className = "tables-row";
+    for (let i = 0; i < count; i++) {
+      row.appendChild(renderTable(groups[groupIdx], groupIdx, scale));
+      groupIdx++;
+    }
+    els.groupsGrid.appendChild(row);
   });
 }
 
@@ -646,14 +759,26 @@ els.makeGroupsBtn.addEventListener("click", () => {
   if (makeGroups()) closeSetup();
 });
 
+// Re-fit the room and re-render the layout when the page resizes.
+let resizeRaf = 0;
+window.addEventListener("resize", () => {
+  if (resizeRaf) cancelAnimationFrame(resizeRaf);
+  resizeRaf = requestAnimationFrame(() => {
+    fitRoom();
+    if (state.lastResult) renderClassroom(state.lastResult);
+  });
+});
+
 // Initial paint
 setActiveTab(0);
 renderSizePills();
+renderOrientationPills();
 refreshStepMeta();
 refreshBrandMeta();
 renderAttendance();
 renderSetList();
 renderEditor();
+fitRoom();
 
 // Auto-open setup on first load
 if (document.readyState === "loading") {
