@@ -175,6 +175,11 @@ button:disabled {
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
+}
+/* Only apply flex layout when the dialog is actually open. Setting
+   display:flex unconditionally overrides the native display:none on
+   closed <dialog> elements, leaving the modal stuck on screen. */
+.setup-dialog[open] {
   display: flex;
   flex-direction: column;
 }
