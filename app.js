@@ -308,12 +308,27 @@ function renderClassroom(groups) {
     return;
   }
   const { cols, rows } = gridDims(groups.length);
-  els.groupsGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  // Use 2x sub-columns so a partial last row can be centered by offsetting
+  // each item by an integer number of sub-columns.
+  const subCols = cols * 2;
+  els.groupsGrid.style.gridTemplateColumns = `repeat(${subCols}, 1fr)`;
   els.groupsGrid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+
+  const lastRowStart = (rows - 1) * cols;
+  const lastRowCount = groups.length - lastRowStart;
+  const offset = cols - lastRowCount; // 0 when the last row is full
 
   groups.forEach((members, i) => {
     const g = document.createElement("div");
     g.className = "group";
+
+    if (i >= lastRowStart && offset > 0) {
+      const indexInRow = i - lastRowStart;
+      const startCol = offset + indexInRow * 2 + 1;
+      g.style.gridColumn = `${startCol} / span 2`;
+    } else {
+      g.style.gridColumn = "span 2";
+    }
 
     const h = document.createElement("div");
     h.className = "group-header";
