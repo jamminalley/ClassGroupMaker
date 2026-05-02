@@ -1,55 +1,68 @@
 "use strict";
 
-const ROOM_ASPECT = 1.5;
+// Per-group hue rotation from the design handoff.
+const GROUP_HUES = [30, 220, 145, 350, 280, 70, 190];
+
+// Table + seat geometry. The wrapper is sized to leave room for chair
+// tiles on every side.
+const TABLE_W = 220;
+const TABLE_H = 130;
+const SEAT_LONG = 80;
+const SEAT_SHORT = 34;
+const SEAT_GAP = 8;
+const TOTAL_W = TABLE_W + (SEAT_SHORT + SEAT_GAP) * 2;
+const TOTAL_H = TABLE_H + (SEAT_SHORT + SEAT_GAP) * 2;
 
 const state = {
-  roster: [],          // [name, ...]
-  absent: new Set(),   // names marked absent
-  constraintSets: [],  // [{ id, name, members: Set<name> }]
-  lastResult: null,    // last rendered groups [[name, ...], ...]
+  roster: [],
+  absent: new Set(),
+  constraintSets: [],     // [{ id, name, hue, members: Set<name> }]
+  activeSetId: null,
+  groupSize: "4-5",       // value of the active size pill
+  lastResult: null,       // [{ hue, students: [name, ...] }, ...]
+  activeTab: 0,
 };
-let nextConstraintId = 1;
+let nextSetId = 1;
+let nextHueIndex = 0;
 
 const els = {
   setupBtn: document.getElementById("setup-btn"),
   reshuffleBtn: document.getElementById("reshuffle-btn"),
   fullscreenBtn: document.getElementById("fullscreen-btn"),
+  brandMeta: document.getElementById("brand-meta"),
 
   classroom: document.getElementById("classroom"),
   groupsGrid: document.getElementById("groups-grid"),
 
   setupDialog: document.getElementById("setup-dialog"),
-  closeSetupBtn: document.getElementById("close-setup-btn"),
-  closeSetupFooterBtn: document.getElementById("close-setup-footer-btn"),
 
   rosterInput: document.getElementById("roster-input"),
   loadRosterBtn: document.getElementById("load-roster-btn"),
   clearRosterBtn: document.getElementById("clear-roster-btn"),
 
-  attendancePanel: document.getElementById("attendance-panel"),
   attendanceList: document.getElementById("attendance-list"),
-  attendanceCount: document.getElementById("attendance-count"),
+  attendanceHint: document.getElementById("attendance-hint"),
+  attendanceEmpty: document.getElementById("attendance-empty"),
   allPresentBtn: document.getElementById("all-present-btn"),
   allAbsentBtn: document.getElementById("all-absent-btn"),
 
-  constraintsPanel: document.getElementById("constraints-panel"),
-  constraintSets: document.getElementById("constraint-sets"),
-  addConstraintBtn: document.getElementById("add-constraint-btn"),
+  setList: document.getElementById("set-list"),
+  addSetBtn: document.getElementById("add-set-btn"),
+  constraintsEditor: document.getElementById("constraints-editor"),
+  sizePills: document.getElementById("size-pills"),
 
-  groupingPanel: document.getElementById("grouping-panel"),
   groupingError: document.getElementById("grouping-error"),
   makeGroupsBtn: document.getElementById("make-groups-btn"),
 };
+
+const stepMetas = [0, 1, 2].map((i) => document.getElementById(`step-meta-${i}`));
+const stepTabs = Array.from(document.querySelectorAll(".step-tab"));
+const stepBodies = Array.from(document.querySelectorAll(".step-body"));
 
 // --- helpers ---
 function parseRoster(text) {
   return text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
-
-function sortedRoster() {
-  return state.roster.slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-}
-
 function shuffle(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -58,130 +71,307 @@ function shuffle(arr) {
   }
   return a;
 }
+function sortedRoster() {
+  return state.roster.slice().sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" })
+  );
+}
+function getPresent() {
+  return state.roster.filter((n) => !state.absent.has(n));
+}
+function activeSet() {
+  return state.constraintSets.find((s) => s.id === state.activeSetId) || null;
+}
+
+// --- step rail ---
+function setActiveTab(idx) {
+  state.activeTab = idx;
+  stepTabs.forEach((t, i) => {
+    t.classList.toggle("active", i === idx);
+    t.setAttribute("aria-selected", i === idx ? "true" : "false");
+  });
+  stepBodies.forEach((b, i) => (b.hidden = i !== idx));
+}
+
+function refreshStepMeta() {
+  stepMetas[0].textContent = `${state.roster.length} students`;
+  if (state.roster.length === 0) {
+    stepMetas[1].textContent = "—";
+  } else {
+    const present = getPresent().length;
+    stepMetas[1].textContent = `${present} present, ${state.absent.size} out`;
+  }
+  stepMetas[2].textContent = `${state.constraintSets.length} ${state.constraintSets.length === 1 ? "set" : "sets"}`;
+}
+
+function refreshBrandMeta() {
+  if (state.roster.length === 0) {
+    els.brandMeta.textContent = "No roster loaded";
+  } else {
+    const present = getPresent().length;
+    els.brandMeta.textContent = `${present} / ${state.roster.length} present`;
+  }
+}
 
 // --- attendance ---
 function renderAttendance() {
   els.attendanceList.innerHTML = "";
-  sortedRoster().forEach((name, i) => {
-    const id = `student-${i}`;
-    const label = document.createElement("label");
-    label.htmlFor = id;
-    if (state.absent.has(name)) label.classList.add("absent");
+  if (state.roster.length === 0) {
+    els.attendanceEmpty.hidden = false;
+    els.attendanceHint.hidden = true;
+    return;
+  }
+  els.attendanceEmpty.hidden = true;
+  els.attendanceHint.hidden = false;
+  els.attendanceHint.textContent = `Tap a name to toggle absent.`;
 
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.id = id;
-    cb.checked = !state.absent.has(name);
-    cb.addEventListener("change", () => {
-      if (cb.checked) state.absent.delete(name);
+  sortedRoster().forEach((name) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "att-chip";
+    if (state.absent.has(name)) btn.classList.add("absent");
+
+    const mark = document.createElement("span");
+    mark.className = "att-mark";
+    mark.textContent = state.absent.has(name) ? "" : "✓";
+
+    const label = document.createElement("span");
+    label.className = "att-name";
+    label.textContent = name;
+
+    btn.appendChild(mark);
+    btn.appendChild(label);
+    btn.addEventListener("click", () => {
+      if (state.absent.has(name)) state.absent.delete(name);
       else state.absent.add(name);
-      label.classList.toggle("absent", !cb.checked);
-      updateAttendanceCount();
+      btn.classList.toggle("absent");
+      mark.textContent = state.absent.has(name) ? "" : "✓";
+      refreshStepMeta();
+      refreshBrandMeta();
     });
-
-    const span = document.createElement("span");
-    span.textContent = name;
-
-    label.appendChild(cb);
-    label.appendChild(span);
-    els.attendanceList.appendChild(label);
+    els.attendanceList.appendChild(btn);
   });
-  updateAttendanceCount();
-}
-
-function getPresent() {
-  return state.roster.filter((n) => !state.absent.has(n));
-}
-
-function updateAttendanceCount() {
-  els.attendanceCount.textContent = `${getPresent().length} of ${state.roster.length} present`;
 }
 
 function setAllAttendance(present) {
   if (present) state.absent.clear();
   else state.roster.forEach((n) => state.absent.add(n));
-  els.attendanceList.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-    cb.checked = present;
-    cb.parentElement.classList.toggle("absent", !present);
-  });
-  updateAttendanceCount();
+  renderAttendance();
+  refreshStepMeta();
+  refreshBrandMeta();
 }
 
 // --- constraint sets ---
-function renderConstraintSets() {
-  els.constraintSets.innerHTML = "";
+function nextHue() {
+  const h = GROUP_HUES[nextHueIndex % GROUP_HUES.length];
+  nextHueIndex++;
+  return h;
+}
+function addConstraintSet() {
+  const set = {
+    id: nextSetId++,
+    name: `Set ${state.constraintSets.length + 1}`,
+    hue: nextHue(),
+    members: new Set(),
+  };
+  state.constraintSets.push(set);
+  state.activeSetId = set.id;
+  renderSetList();
+  renderEditor();
+  refreshStepMeta();
+}
+function deleteSet(id) {
+  state.constraintSets = state.constraintSets.filter((s) => s.id !== id);
+  if (state.activeSetId === id) {
+    state.activeSetId = state.constraintSets.length ? state.constraintSets[0].id : null;
+  }
+  renderSetList();
+  renderEditor();
+  refreshStepMeta();
+}
 
+function renderSetList() {
+  els.setList.innerHTML = "";
+  state.constraintSets.forEach((s) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "set-row";
+    if (s.id === state.activeSetId) row.classList.add("active");
+    row.style.setProperty("--set-hue", s.hue);
+
+    const swatch = document.createElement("span");
+    swatch.className = "set-swatch";
+
+    const info = document.createElement("div");
+    info.className = "set-row-info";
+
+    const name = document.createElement("div");
+    name.className = "set-row-name";
+    name.textContent = s.name || "Untitled set";
+
+    const meta = document.createElement("div");
+    meta.className = "set-row-meta";
+    const count = [...s.members].filter((m) => state.roster.includes(m)).length;
+    meta.textContent = `${count} ${count === 1 ? "member" : "members"}`;
+
+    info.appendChild(name);
+    info.appendChild(meta);
+    row.appendChild(swatch);
+    row.appendChild(info);
+
+    row.addEventListener("click", () => {
+      state.activeSetId = s.id;
+      renderSetList();
+      renderEditor();
+    });
+
+    els.setList.appendChild(row);
+  });
+}
+
+function renderEditor() {
+  els.constraintsEditor.innerHTML = "";
+
+  if (state.roster.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "editor-empty";
+    empty.textContent = "Load a roster first, then add a keep-apart set.";
+    els.constraintsEditor.appendChild(empty);
+    return;
+  }
   if (state.constraintSets.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "hint";
-    empty.style.fontStyle = "italic";
-    empty.textContent = "No constraint groups yet.";
-    els.constraintSets.appendChild(empty);
+    const empty = document.createElement("div");
+    empty.className = "editor-empty";
+    empty.innerHTML = `Add a set to start. Use one big set (e.g. <em>Strong students</em>) to spread experts across groups, or a small set to keep table-mates apart.`;
+    els.constraintsEditor.appendChild(empty);
     return;
   }
 
-  state.constraintSets.forEach((set) => {
-    const wrap = document.createElement("div");
-    wrap.className = "constraint-set";
+  const cur = activeSet();
+  if (!cur) return;
 
-    const header = document.createElement("div");
-    header.className = "cs-header";
+  const editor = document.createElement("div");
+  editor.style.setProperty("--set-hue", cur.hue);
 
-    const nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.className = "cs-name";
-    nameInput.value = set.name;
-    nameInput.placeholder = "Name (e.g. High performers)";
-    nameInput.addEventListener("input", () => { set.name = nameInput.value; });
+  const header = document.createElement("div");
+  header.className = "editor-header";
 
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "secondary cs-delete";
-    delBtn.textContent = "Delete";
-    delBtn.addEventListener("click", () => {
-      state.constraintSets = state.constraintSets.filter((s) => s.id !== set.id);
-      renderConstraintSets();
-    });
+  const left = document.createElement("div");
+  left.className = "editor-header-left";
 
-    header.appendChild(nameInput);
-    header.appendChild(delBtn);
-    wrap.appendChild(header);
+  const swatch = document.createElement("span");
+  swatch.className = "editor-swatch";
 
-    const chips = document.createElement("div");
-    chips.className = "cs-chips";
-    sortedRoster().forEach((name) => {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "cs-chip";
-      if (set.members.has(name)) chip.classList.add("selected");
-      chip.textContent = name;
-      chip.addEventListener("click", () => {
-        if (set.members.has(name)) {
-          set.members.delete(name);
-          chip.classList.remove("selected");
-        } else {
-          set.members.add(name);
-          chip.classList.add("selected");
-        }
-      });
-      chips.appendChild(chip);
-    });
-    wrap.appendChild(chips);
-
-    els.constraintSets.appendChild(wrap);
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className = "editor-name";
+  nameInput.value = cur.name;
+  nameInput.placeholder = "Name this set";
+  nameInput.addEventListener("input", () => {
+    cur.name = nameInput.value;
+    renderSetList();
   });
+
+  left.appendChild(swatch);
+  left.appendChild(nameInput);
+
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "btn-ghost btn-pill editor-delete";
+  delBtn.textContent = "Delete set";
+  delBtn.addEventListener("click", () => deleteSet(cur.id));
+
+  header.appendChild(left);
+  header.appendChild(delBtn);
+  editor.appendChild(header);
+
+  const hint = document.createElement("p");
+  hint.className = "ui-hint";
+  hint.textContent = "Click names to add or remove from this set.";
+  editor.appendChild(hint);
+
+  const grid = document.createElement("div");
+  grid.className = "member-grid";
+  sortedRoster().forEach((name) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "member-chip";
+    if (cur.members.has(name)) chip.classList.add("in-set");
+    if (state.absent.has(name)) chip.classList.add("absent");
+    chip.textContent = name;
+    chip.addEventListener("click", () => {
+      if (cur.members.has(name)) cur.members.delete(name);
+      else cur.members.add(name);
+      chip.classList.toggle("in-set");
+      renderSetList();
+      renderSummary();
+    });
+    grid.appendChild(chip);
+  });
+  editor.appendChild(grid);
+
+  const summary = document.createElement("div");
+  summary.id = "summary-panel-host";
+  editor.appendChild(summary);
+
+  els.constraintsEditor.appendChild(editor);
+  renderSummary();
 }
 
-function addConstraintSet() {
-  state.constraintSets.push({
-    id: nextConstraintId++,
-    name: "",
-    members: new Set(),
-  });
-  renderConstraintSets();
+function renderSummary() {
+  const host = document.getElementById("summary-panel-host");
+  if (!host) return;
+  host.innerHTML = "";
+
+  const tags = state.constraintSets.flatMap((s) =>
+    [...s.members]
+      .filter((m) => state.roster.includes(m))
+      .map((m) => ({ name: m, hue: s.hue }))
+  );
+  if (tags.length === 0) return;
+
+  const panel = document.createElement("div");
+  panel.className = "summary-panel";
+
+  const label = document.createElement("div");
+  label.className = "summary-panel-label";
+  label.textContent = "Students in any keep-apart set";
+
+  const wrap = document.createElement("div");
+  wrap.className = "summary-tags";
+  tags
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+    .forEach((t) => {
+      const tag = document.createElement("span");
+      tag.className = "summary-tag";
+      tag.style.setProperty("--tag-hue", t.hue);
+      const dot = document.createElement("span");
+      dot.className = "summary-tag-dot";
+      tag.appendChild(dot);
+      tag.appendChild(document.createTextNode(t.name));
+      wrap.appendChild(tag);
+    });
+
+  panel.appendChild(label);
+  panel.appendChild(wrap);
+  host.appendChild(panel);
 }
 
-// --- partition into group sizes ---
+// --- group size pills ---
+function renderSizePills() {
+  Array.from(els.sizePills.querySelectorAll(".size-pill")).forEach((pill) => {
+    const isActive = pill.dataset.value === state.groupSize;
+    pill.classList.toggle("active", isActive);
+  });
+}
+els.sizePills.addEventListener("click", (e) => {
+  const pill = e.target.closest(".size-pill");
+  if (!pill) return;
+  state.groupSize = pill.dataset.value;
+  renderSizePills();
+});
+
+// --- partition + assignment ---
 function partitionSizes(n, min, max) {
   if (n <= 0 || min > max || n < min) return null;
   const kMin = Math.ceil(n / max);
@@ -202,21 +392,14 @@ function partitionSizes(n, min, max) {
   return Array.from({ length: k }, (_, i) => (i < extra ? base + 1 : base));
 }
 
-// --- assignment honoring constraint sets ---
-// Greedy: place constraint-set members first (largest sets first), each into
-// the group with the fewest existing same-set members and the most remaining
-// capacity. Then fill the rest of the students into groups with capacity.
 function assignWithConstraints(students, sizes, constraintSets) {
   const groups = sizes.map(() => []);
   const remaining = sizes.slice();
 
-  // Active sets: constrain only members who are present, and only sets with
-  // 2+ active members (a singleton set imposes no constraint).
   const activeSets = constraintSets
     .map((cs) => [...cs.members].filter((m) => students.includes(m)))
-    .filter((members) => members.length >= 2);
+    .filter((m) => m.length >= 2);
 
-  // student -> [setIndex, ...]
   const studentSets = new Map();
   activeSets.forEach((members, idx) => {
     members.forEach((m) => {
@@ -236,7 +419,6 @@ function assignWithConstraints(students, sizes, constraintSets) {
     }
     return c;
   }
-
   function pickGroup(candidate) {
     let best = -1;
     let bestConflicts = Infinity;
@@ -254,12 +436,11 @@ function assignWithConstraints(students, sizes, constraintSets) {
   }
 
   const placed = new Set();
-  // Larger constraint sets are harder to spread — handle them first.
   const orderedSets = activeSets
-    .map((members, i) => ({ i, members }))
-    .sort((a, b) => b.members.length - a.members.length);
+    .map((members) => members)
+    .sort((a, b) => b.length - a.length);
 
-  for (const { members } of orderedSets) {
+  for (const members of orderedSets) {
     for (const member of shuffle(members)) {
       if (placed.has(member)) continue;
       const g = pickGroup(member);
@@ -278,27 +459,93 @@ function assignWithConstraints(students, sizes, constraintSets) {
     remaining[g]--;
   }
 
-  // Shuffle within each group so the constraint-anchored member isn't always
-  // listed first.
   return groups.map((g) => shuffle(g));
 }
 
-// --- classroom rendering ---
-function gridDims(n, target = ROOM_ASPECT) {
-  let bestCols = n;
-  let bestRows = 1;
-  let bestScore = Infinity;
-  for (let cols = 1; cols <= n; cols++) {
-    const rows = Math.ceil(n / cols);
-    const aspect = cols / rows;
-    const score = Math.abs(Math.log(aspect / target));
-    if (score < bestScore) {
-      bestScore = score;
-      bestCols = cols;
-      bestRows = rows;
+// --- top-down classroom rendering ---
+function seatLayout(n) {
+  if (n <= 0) return [];
+  const caps = { top: 2, bottom: 2, left: 1, right: 1 };
+  const order = ["top", "bottom", "left", "right"];
+  const counts = { top: 0, bottom: 0, left: 0, right: 0 };
+  let remaining = Math.min(n, 6);
+  for (const side of order) {
+    const take = Math.min(caps[side], remaining);
+    counts[side] = take;
+    remaining -= take;
+    if (!remaining) break;
+  }
+  const seats = [];
+  for (const side of order) {
+    const c = counts[side];
+    for (let k = 0; k < c; k++) {
+      const t = c === 1 ? 0.5 : (k + 1) / (c + 1);
+      seats.push({ side, t });
     }
   }
-  return { cols: bestCols, rows: bestRows };
+  return seats;
+}
+
+function renderTable(group, idx) {
+  const wrap = document.createElement("div");
+  wrap.className = "td-table";
+  wrap.style.width = `${TOTAL_W}px`;
+  wrap.style.height = `${TOTAL_H}px`;
+  wrap.style.setProperty("--td-tint", `oklch(0.94 0.05 ${group.hue})`);
+  wrap.style.setProperty("--td-edge", `oklch(0.78 0.09 ${group.hue})`);
+  wrap.style.setProperty("--td-ink", `oklch(0.3 0.06 ${group.hue})`);
+  wrap.style.setProperty("--td-seat", `oklch(0.97 0.02 ${group.hue})`);
+
+  const surface = document.createElement("div");
+  surface.className = "td-table-surface";
+  surface.style.left = `${SEAT_SHORT + SEAT_GAP}px`;
+  surface.style.top = `${SEAT_SHORT + SEAT_GAP}px`;
+  surface.style.width = `${TABLE_W}px`;
+  surface.style.height = `${TABLE_H}px`;
+
+  const title = document.createElement("div");
+  title.className = "td-table-title";
+  title.textContent = `Group ${idx + 1}`;
+
+  const meta = document.createElement("div");
+  meta.className = "td-table-meta";
+  meta.textContent = `${String(idx + 1).padStart(2, "0")} · ${group.students.length} ${group.students.length === 1 ? "seat" : "seats"}`;
+
+  surface.appendChild(title);
+  surface.appendChild(meta);
+  wrap.appendChild(surface);
+
+  const layout = seatLayout(group.students.length);
+  layout.forEach((s, i) => {
+    const seat = document.createElement("div");
+    seat.className = "td-seat";
+    if (s.side === "left" || s.side === "right") {
+      seat.classList.add("vertical", s.side);
+      seat.style.width = `${SEAT_SHORT}px`;
+      seat.style.height = `${SEAT_LONG}px`;
+      seat.style.top = `${(SEAT_SHORT + SEAT_GAP) + s.t * TABLE_H - SEAT_LONG / 2}px`;
+      seat.style.left = s.side === "left" ? "0" : `${TOTAL_W - SEAT_SHORT}px`;
+    } else {
+      seat.style.width = `${SEAT_LONG}px`;
+      seat.style.height = `${SEAT_SHORT}px`;
+      seat.style.left = `${(SEAT_SHORT + SEAT_GAP) + s.t * TABLE_W - SEAT_LONG / 2}px`;
+      seat.style.top = s.side === "top" ? "0" : `${TOTAL_H - SEAT_SHORT}px`;
+    }
+    const label = document.createElement("span");
+    label.textContent = group.students[i] || "";
+    seat.appendChild(label);
+    wrap.appendChild(seat);
+  });
+
+  return wrap;
+}
+
+function showEmptyHint() {
+  els.groupsGrid.innerHTML = "";
+  const hint = document.createElement("div");
+  hint.className = "empty-hint";
+  hint.innerHTML = "<p>No groups yet.</p><p>Click <strong>Setup</strong> to load a roster and make groups.</p>";
+  els.groupsGrid.appendChild(hint);
 }
 
 function renderClassroom(groups) {
@@ -307,87 +554,17 @@ function renderClassroom(groups) {
     showEmptyHint();
     return;
   }
-  const { cols, rows } = gridDims(groups.length);
-  // Use 2x sub-columns so a partial last row can be centered by offsetting
-  // each item by an integer number of sub-columns.
-  const subCols = cols * 2;
-  els.groupsGrid.style.gridTemplateColumns = `repeat(${subCols}, 1fr)`;
-  els.groupsGrid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-
-  const lastRowStart = (rows - 1) * cols;
-  const lastRowCount = groups.length - lastRowStart;
-  const offset = cols - lastRowCount; // 0 when the last row is full
-
-  groups.forEach((members, i) => {
-    const g = document.createElement("div");
-    g.className = "group";
-
-    if (i >= lastRowStart && offset > 0) {
-      const indexInRow = i - lastRowStart;
-      const startCol = offset + indexInRow * 2 + 1;
-      g.style.gridColumn = `${startCol} / span 2`;
-    } else {
-      g.style.gridColumn = "span 2";
-    }
-
-    const h = document.createElement("div");
-    h.className = "group-header";
-    h.textContent = `Group ${i + 1}`;
-    g.appendChild(h);
-
-    const ul = document.createElement("ul");
-    ul.className = "group-members";
-    members.forEach((name) => {
-      const li = document.createElement("li");
-      li.textContent = name;
-      ul.appendChild(li);
-    });
-    g.appendChild(ul);
-
-    els.groupsGrid.appendChild(g);
+  groups.forEach((g, i) => {
+    els.groupsGrid.appendChild(renderTable(g, i));
   });
-  fitGroupText();
-}
-
-function showEmptyHint() {
-  els.groupsGrid.innerHTML = "";
-  els.groupsGrid.style.gridTemplateColumns = "";
-  els.groupsGrid.style.gridTemplateRows = "";
-  const hint = document.createElement("div");
-  hint.className = "empty-hint";
-  hint.innerHTML = "<p>No groups yet.</p><p>Click <strong>Setup</strong> to load a roster and make groups.</p>";
-  els.groupsGrid.appendChild(hint);
-}
-
-function fitGroupText() {
-  const groupEls = els.groupsGrid.querySelectorAll(".group");
-  groupEls.forEach((g) => {
-    const list = g.querySelector(".group-members");
-    if (!list) return;
-    list.querySelectorAll("li").forEach((li) => (li.style.fontSize = ""));
-    const firstLi = list.querySelector("li");
-    if (!firstLi) return;
-    let size = parseFloat(getComputedStyle(firstLi).fontSize);
-    let guard = 30;
-    while (
-      (g.scrollHeight > g.clientHeight + 1 || list.scrollWidth > list.clientWidth + 1) &&
-      size > 12 &&
-      guard-- > 0
-    ) {
-      size -= 1;
-      list.querySelectorAll("li").forEach((li) => (li.style.fontSize = `${size}px`));
-    }
-  });
-}
-
-// --- group-size selection ---
-function getSelectedSizeRange() {
-  const sel = document.querySelector('input[name="group-size"]:checked');
-  const [a, b] = sel.value.split("-");
-  return { min: Number(a), max: Number(b) };
 }
 
 // --- main actions ---
+function getSelectedSizeRange() {
+  const [a, b] = state.groupSize.split("-");
+  return { min: Number(a), max: Number(b) };
+}
+
 function makeGroups() {
   els.groupingError.hidden = true;
   const present = getPresent();
@@ -399,46 +576,50 @@ function makeGroups() {
     els.groupingError.hidden = false;
     return false;
   }
-  const groups = assignWithConstraints(present, sizes, state.constraintSets);
+  const studentGroups = assignWithConstraints(present, sizes, state.constraintSets);
+  // Attach a hue to each group from the rotating palette.
+  const groups = studentGroups.map((students, i) => ({
+    hue: GROUP_HUES[i % GROUP_HUES.length],
+    students,
+  }));
   state.lastResult = groups;
   renderClassroom(groups);
   els.reshuffleBtn.disabled = false;
   return true;
 }
 
-function reshuffle() {
-  // Re-runs assignment using current state (attendance, constraints, size).
-  makeGroups();
-}
+function reshuffle() { makeGroups(); }
 
-// --- dialog open/close ---
 function openSetup() { els.setupDialog.showModal(); }
 function closeSetup() { els.setupDialog.close(); }
 
 // --- wire up ---
 els.setupBtn.addEventListener("click", openSetup);
-els.closeSetupBtn.addEventListener("click", closeSetup);
-els.closeSetupFooterBtn.addEventListener("click", closeSetup);
 els.reshuffleBtn.addEventListener("click", reshuffle);
 els.fullscreenBtn.addEventListener("click", () => {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
   else document.exitFullscreen?.();
 });
 
+stepTabs.forEach((t) => {
+  t.addEventListener("click", () => setActiveTab(Number(t.dataset.tab)));
+});
+
 els.loadRosterBtn.addEventListener("click", () => {
   const names = parseRoster(els.rosterInput.value);
   if (names.length === 0) return;
   state.roster = names;
-  // Drop stale absent entries and constraint members no longer in the roster.
   state.absent = new Set([...state.absent].filter((n) => state.roster.includes(n)));
   state.constraintSets.forEach((cs) => {
     cs.members = new Set([...cs.members].filter((n) => state.roster.includes(n)));
   });
   renderAttendance();
-  renderConstraintSets();
-  els.attendancePanel.hidden = false;
-  els.constraintsPanel.hidden = false;
-  els.groupingPanel.hidden = false;
+  renderSetList();
+  renderEditor();
+  refreshStepMeta();
+  refreshBrandMeta();
+  // Move the user forward to attendance so the new roster is visible.
+  setActiveTab(1);
 });
 
 els.clearRosterBtn.addEventListener("click", () => {
@@ -446,27 +627,35 @@ els.clearRosterBtn.addEventListener("click", () => {
   state.roster = [];
   state.absent.clear();
   state.constraintSets = [];
-  els.attendanceList.innerHTML = "";
-  els.constraintSets.innerHTML = "";
-  els.attendancePanel.hidden = true;
-  els.constraintsPanel.hidden = true;
-  els.groupingPanel.hidden = true;
-  els.groupingError.hidden = true;
+  state.activeSetId = null;
+  nextHueIndex = 0;
+  renderAttendance();
+  renderSetList();
+  renderEditor();
+  refreshStepMeta();
+  refreshBrandMeta();
+  setActiveTab(0);
 });
 
 els.allPresentBtn.addEventListener("click", () => setAllAttendance(true));
 els.allAbsentBtn.addEventListener("click", () => setAllAttendance(false));
-els.addConstraintBtn.addEventListener("click", addConstraintSet);
+
+els.addSetBtn.addEventListener("click", addConstraintSet);
 
 els.makeGroupsBtn.addEventListener("click", () => {
   if (makeGroups()) closeSetup();
 });
 
-window.addEventListener("resize", () => {
-  if (state.lastResult) fitGroupText();
-});
+// Initial paint
+setActiveTab(0);
+renderSizePills();
+refreshStepMeta();
+refreshBrandMeta();
+renderAttendance();
+renderSetList();
+renderEditor();
 
-// Open setup automatically on first load to nudge the user.
+// Auto-open setup on first load
 if (document.readyState === "loading") {
   window.addEventListener("DOMContentLoaded", openSetup);
 } else {

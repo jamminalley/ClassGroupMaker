@@ -3,90 +3,129 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ClassGroupMaker</title>
+  <title>Class Group Maker</title>
+  <link rel="icon" href="favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="toolbar">
-    <span class="title">ClassGroupMaker</span>
-    <div class="toolbar-actions">
-      <button id="setup-btn" type="button" class="primary">Setup</button>
-      <button id="reshuffle-btn" type="button" disabled>Re-shuffle</button>
-      <button id="fullscreen-btn" type="button" class="secondary">Fullscreen</button>
+  <header class="topbar">
+    <div class="brand">
+      <span class="wordmark">Class Group Maker</span>
+      <span class="brand-meta" id="brand-meta">No roster loaded</span>
+    </div>
+    <div class="topbar-actions">
+      <button type="button" class="btn-ghost" id="setup-btn">Setup</button>
+      <button type="button" class="btn-ghost" id="reshuffle-btn" disabled>Re-shuffle</button>
+      <button type="button" class="btn-ghost" id="fullscreen-btn">Fullscreen</button>
     </div>
   </header>
 
-  <main id="classroom" class="classroom">
-    <div class="front-label">FRONT OF CLASSROOM</div>
-    <div id="groups-grid" class="groups-grid">
-      <div class="empty-hint">
-        <p>No groups yet.</p>
-        <p>Click <strong>Setup</strong> to load a roster and make groups.</p>
+  <main class="page">
+    <section class="room" id="classroom">
+      <div class="whiteboard">Whiteboard &middot; Front of classroom</div>
+      <div class="tables-grid" id="groups-grid">
+        <div class="empty-hint">
+          <p>No groups yet.</p>
+          <p>Click <strong>Setup</strong> to load a roster and make groups.</p>
+        </div>
       </div>
-    </div>
+    </section>
   </main>
 
   <dialog id="setup-dialog" class="setup-dialog">
-    <header class="dialog-header">
-      <h2>Setup</h2>
-      <form method="dialog" class="dialog-close-form">
-        <button type="submit" class="close-btn" id="close-setup-btn" aria-label="Close">&times;</button>
-      </form>
-    </header>
+    <div class="dialog-shell">
+      <header class="dialog-header">
+        <h2 class="dialog-title">Set up today's class</h2>
+        <form method="dialog" class="dialog-close-form">
+          <button type="submit" class="btn-ghost btn-pill" id="close-setup-btn" aria-label="Close">&times; Close</button>
+        </form>
+      </header>
 
-    <div class="dialog-body">
-      <section class="panel">
-        <h3>Roster</h3>
-        <p class="hint">One student per line. Click <em>Load roster</em> to refresh attendance and constraint pickers.</p>
-        <textarea id="roster-input" rows="6" placeholder="Ada Lovelace&#10;Alan Turing&#10;Grace Hopper&#10;..."></textarea>
-        <div class="row">
-          <button type="button" id="load-roster-btn">Load roster</button>
-          <button type="button" id="clear-roster-btn" class="secondary">Clear all</button>
+      <div class="step-card">
+        <nav class="step-rail" role="tablist">
+          <button type="button" class="step-tab" data-tab="0" role="tab" aria-selected="true">
+            <span class="step-tab-row">
+              <span class="step-num">1</span>
+              <span class="step-label">Roster</span>
+            </span>
+            <span class="step-meta" id="step-meta-0">0 students</span>
+          </button>
+          <button type="button" class="step-tab" data-tab="1" role="tab" aria-selected="false">
+            <span class="step-tab-row">
+              <span class="step-num">2</span>
+              <span class="step-label">Attendance</span>
+            </span>
+            <span class="step-meta" id="step-meta-1">&mdash;</span>
+          </button>
+          <button type="button" class="step-tab" data-tab="2" role="tab" aria-selected="false">
+            <span class="step-tab-row">
+              <span class="step-num">3</span>
+              <span class="step-label">Don't seat together</span>
+            </span>
+            <span class="step-meta" id="step-meta-2">0 sets</span>
+          </button>
+        </nav>
+
+        <div class="step-body" data-step="0">
+          <label class="ui-label" for="roster-input">Paste roster</label>
+          <p class="ui-hint">One student per line. We'll alphabetize the display.</p>
+          <textarea id="roster-input" rows="10" placeholder="Ada Lovelace&#10;Alan Turing&#10;Grace Hopper&#10;..."></textarea>
+          <div class="row" style="margin-top: 12px;">
+            <button type="button" class="btn-primary btn-pill" id="load-roster-btn">Load roster</button>
+            <button type="button" class="btn-ghost btn-pill" id="clear-roster-btn">Clear</button>
+          </div>
         </div>
-      </section>
 
-      <section class="panel" id="attendance-panel" hidden>
-        <h3>Attendance</h3>
-        <p class="hint">Uncheck anyone absent. <span id="attendance-count"></span></p>
-        <div class="row">
-          <button type="button" id="all-present-btn" class="secondary">All present</button>
-          <button type="button" id="all-absent-btn" class="secondary">All absent</button>
+        <div class="step-body" data-step="1" hidden>
+          <div class="row split">
+            <div>
+              <label class="ui-label">Who's here today?</label>
+              <p class="ui-hint" id="attendance-hint">Tap a name to toggle absent.</p>
+            </div>
+            <div class="row">
+              <button type="button" class="btn-ghost btn-pill" id="all-present-btn">All present</button>
+              <button type="button" class="btn-ghost btn-pill" id="all-absent-btn">All absent</button>
+            </div>
+          </div>
+          <div class="attendance-grid" id="attendance-list"></div>
+          <p class="ui-hint" id="attendance-empty" hidden>Load a roster first.</p>
         </div>
-        <div id="attendance-list" class="attendance-list"></div>
-      </section>
 
-      <section class="panel" id="constraints-panel" hidden>
-        <h3>Don't group together</h3>
-        <p class="hint">
-          A constraint group is a list of students who should land in <em>different</em> output groups when possible.
-          Use one big set to spread strong students out as group resources, or a small set to keep table-mates apart.
-          Click a name to toggle membership.
-        </p>
-        <div id="constraint-sets"></div>
-        <div class="row">
-          <button type="button" id="add-constraint-btn">+ Add constraint group</button>
+        <div class="step-body" data-step="2" hidden>
+          <div class="constraints-layout">
+            <aside class="constraints-sidebar">
+              <label class="ui-label">Keep-apart sets</label>
+              <p class="ui-hint">Members of a set will be split across different groups when possible.</p>
+              <div class="set-list" id="set-list"></div>
+              <button type="button" class="btn-ghost btn-pill set-add-btn" id="add-set-btn">+ New set</button>
+
+              <label class="ui-label" style="margin-top: 24px;">Group size</label>
+              <div class="size-pills" id="size-pills">
+                <button type="button" class="size-pill" data-value="2-2">pairs</button>
+                <button type="button" class="size-pill" data-value="2-3">2-3</button>
+                <button type="button" class="size-pill" data-value="3-4">3-4</button>
+                <button type="button" class="size-pill active" data-value="4-5">4-5</button>
+                <button type="button" class="size-pill" data-value="5-6">5-6</button>
+              </div>
+            </aside>
+            <div class="constraints-editor" id="constraints-editor"></div>
+          </div>
         </div>
-      </section>
+      </div>
 
-      <section class="panel" id="grouping-panel" hidden>
-        <h3>Group size</h3>
-        <fieldset class="size-options">
-          <label><input type="radio" name="group-size" value="2-2" checked /> Pairs (2)</label>
-          <label><input type="radio" name="group-size" value="2-3" /> 2&ndash;3</label>
-          <label><input type="radio" name="group-size" value="3-4" /> 3&ndash;4</label>
-          <label><input type="radio" name="group-size" value="4-5" /> 4&ndash;5</label>
-          <label><input type="radio" name="group-size" value="5-6" /> 5&ndash;6</label>
-        </fieldset>
-        <p id="grouping-error" class="error" hidden></p>
-      </section>
+      <footer class="dialog-footer">
+        <p class="error" id="grouping-error" hidden></p>
+        <div class="row" style="margin-left: auto;">
+          <form method="dialog" class="dialog-close-form">
+            <button type="submit" class="btn-ghost btn-pill">Cancel</button>
+          </form>
+          <button type="button" class="btn-primary btn-pill" id="make-groups-btn">Make groups &rarr;</button>
+        </div>
+      </footer>
     </div>
-
-    <footer class="dialog-footer">
-      <form method="dialog" class="dialog-close-form">
-        <button type="submit" class="secondary" id="close-setup-footer-btn">Close</button>
-      </form>
-      <button type="button" class="primary" id="make-groups-btn">Make groups</button>
-    </footer>
   </dialog>
 
   <script src="app.js"></script>
