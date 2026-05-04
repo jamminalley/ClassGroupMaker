@@ -105,6 +105,60 @@ function activeSet() {
   return state.constraintSets.find((s) => s.id === state.activeSetId) || null;
 }
 
+// --- persistence ---
+// Saves roster, constraint sets, group size, and orientation to
+// localStorage so the teacher's keep-apart sets survive across
+// sessions. Per-day state (attendance, last shuffle) is intentionally
+// not persisted.
+const STORAGE_KEY = "classGroupMaker.v1";
+
+function persist() {
+  try {
+    const data = {
+      roster: state.roster,
+      constraintSets: state.constraintSets.map((cs) => ({
+        id: cs.id,
+        name: cs.name,
+        hue: cs.hue,
+        members: [...cs.members],
+      })),
+      groupSize: state.groupSize,
+      orientation: state.orientation,
+      nextSetId,
+      nextHueIndex,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (_) {
+    // localStorage may be disabled or full — fail silently.
+  }
+}
+
+function loadPersisted() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (Array.isArray(data.roster)) state.roster = data.roster;
+    if (Array.isArray(data.constraintSets)) {
+      state.constraintSets = data.constraintSets.map((cs) => ({
+        id: cs.id,
+        name: cs.name || "",
+        hue: cs.hue || GROUP_HUES[0],
+        members: new Set(Array.isArray(cs.members) ? cs.members : []),
+      }));
+    }
+    if (typeof data.groupSize === "string") state.groupSize = data.groupSize;
+    if (data.orientation === "portrait" || data.orientation === "landscape") {
+      state.orientation = data.orientation;
+    }
+    if (typeof data.nextSetId === "number") nextSetId = data.nextSetId;
+    if (typeof data.nextHueIndex === "number") nextHueIndex = data.nextHueIndex;
+    state.activeSetId = state.constraintSets.length ? state.constraintSets[0].id : null;
+  } catch (_) {
+    // Corrupted blob — leave state at defaults.
+  }
+}
+
 // --- step rail ---
 function setActiveTab(idx) {
   state.activeTab = idx;
@@ -203,6 +257,7 @@ function addConstraintSet() {
   renderSetList();
   renderEditor();
   refreshStepMeta();
+  persist();
 }
 function deleteSet(id) {
   state.constraintSets = state.constraintSets.filter((s) => s.id !== id);
@@ -212,6 +267,7 @@ function deleteSet(id) {
   renderSetList();
   renderEditor();
   refreshStepMeta();
+  persist();
 }
 
 function renderSetList() {
@@ -294,6 +350,7 @@ function renderEditor() {
   nameInput.addEventListener("input", () => {
     cur.name = nameInput.value;
     renderSetList();
+    persist();
   });
 
   left.appendChild(swatch);
@@ -329,6 +386,7 @@ function renderEditor() {
       chip.classList.toggle("in-set");
       renderSetList();
       renderSummary();
+      persist();
     });
     grid.appendChild(chip);
   });
@@ -393,6 +451,7 @@ els.sizePills.addEventListener("click", (e) => {
   if (!pill) return;
   state.groupSize = pill.dataset.value;
   renderSizePills();
+  persist();
 });
 
 function renderOrientationPills() {
@@ -409,6 +468,7 @@ els.orientationPills.addEventListener("click", (e) => {
   // handles the empty state and updates the grid's orientation class.
   fitRoom();
   renderClassroom(state.lastResult);
+  persist();
 });
 
 // --- partition + assignment ---
@@ -923,6 +983,7 @@ els.loadRosterBtn.addEventListener("click", () => {
   renderEditor();
   refreshStepMeta();
   refreshBrandMeta();
+  persist();
   // Move the user forward to attendance so the new roster is visible.
   setActiveTab(1);
 });
@@ -940,6 +1001,7 @@ els.clearRosterBtn.addEventListener("click", () => {
   refreshStepMeta();
   refreshBrandMeta();
   refreshLatecomerButton();
+  persist();
   setActiveTab(0);
 });
 
@@ -968,6 +1030,13 @@ const pageResizeObserver = new ResizeObserver(scheduleRefit);
 pageResizeObserver.observe(els.page);
 window.addEventListener("resize", scheduleRefit);
 document.addEventListener("fullscreenchange", scheduleRefit);
+
+// Restore saved roster, constraint sets, group size, and orientation
+// before the first paint so the UI reflects them immediately.
+loadPersisted();
+if (state.roster.length > 0) {
+  els.rosterInput.value = state.roster.join("\n");
+}
 
 // Initial paint
 setActiveTab(0);
