@@ -226,6 +226,18 @@ body {
   line-height: 1;
   /* Font-size set inline by JS so it scales with the table. */
 }
+.td-table-overflow {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  color: var(--td-ink);
+  margin-top: 4px;
+  text-align: center;
+  max-width: 92%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
 .td-seat {
   position: absolute;
   display: grid;
@@ -253,7 +265,7 @@ body {
   transform: rotate(180deg);
 }
 
-/* Setup dialog */
+/* Setup dialog (and the latecomer dialog reuses the shell styles) */
 .setup-dialog {
   width: min(1100px, 94vw);
   max-height: 92vh;
@@ -264,6 +276,12 @@ body {
   color: var(--ink);
   overflow: visible;
 }
+.latecomer-dialog {
+  width: min(640px, 92vw);
+  max-height: 80vh;
+}
+.latecomer-dialog .step-card { flex: 0 1 auto; }
+.latecomer-dialog .step-body { max-height: 60vh; }
 .setup-dialog[open] {
   display: block;
 }

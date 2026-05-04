@@ -19,6 +19,7 @@
     <div class="topbar-actions">
       <button type="button" class="btn-ghost" id="setup-btn">Setup</button>
       <button type="button" class="btn-ghost" id="reshuffle-btn" disabled>Re-shuffle</button>
+      <button type="button" class="btn-ghost" id="add-latecomer-btn" disabled>Add latecomer</button>
       <button type="button" class="btn-ghost" id="fullscreen-btn">Fullscreen</button>
     </div>
   </header>
@@ -129,6 +130,34 @@
             <button type="submit" class="btn-ghost btn-pill">Cancel</button>
           </form>
           <button type="button" class="btn-primary btn-pill" id="make-groups-btn">Make groups &rarr;</button>
+        </div>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="latecomer-dialog" class="setup-dialog latecomer-dialog">
+    <div class="dialog-shell">
+      <header class="dialog-header">
+        <h2 class="dialog-title">Add latecomers</h2>
+        <form method="dialog" class="dialog-close-form">
+          <button type="submit" class="btn-ghost btn-pill" aria-label="Close">&times; Close</button>
+        </form>
+      </header>
+
+      <div class="step-card">
+        <div class="step-body" style="overflow-y: auto;">
+          <p class="ui-hint" id="latecomer-hint">Tap each student who has just arrived. They'll be added to the smallest group.</p>
+          <div class="attendance-grid" id="latecomer-list"></div>
+          <p class="ui-hint" id="latecomer-empty" hidden>No absent students.</p>
+        </div>
+      </div>
+
+      <footer class="dialog-footer">
+        <div class="row" style="margin-left: auto;">
+          <form method="dialog" class="dialog-close-form">
+            <button type="submit" class="btn-ghost btn-pill">Cancel</button>
+          </form>
+          <button type="button" class="btn-primary btn-pill" id="confirm-latecomer-btn" disabled>Add to groups &rarr;</button>
         </div>
       </footer>
     </div>

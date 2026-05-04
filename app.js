@@ -41,8 +41,15 @@ let nextHueIndex = 0;
 const els = {
   setupBtn: document.getElementById("setup-btn"),
   reshuffleBtn: document.getElementById("reshuffle-btn"),
+  addLatecomerBtn: document.getElementById("add-latecomer-btn"),
   fullscreenBtn: document.getElementById("fullscreen-btn"),
   brandMeta: document.getElementById("brand-meta"),
+
+  latecomerDialog: document.getElementById("latecomer-dialog"),
+  latecomerList: document.getElementById("latecomer-list"),
+  latecomerHint: document.getElementById("latecomer-hint"),
+  latecomerEmpty: document.getElementById("latecomer-empty"),
+  confirmLatecomerBtn: document.getElementById("confirm-latecomer-btn"),
 
   classroom: document.getElementById("classroom"),
   groupsGrid: document.getElementById("groups-grid"),
@@ -163,6 +170,7 @@ function renderAttendance() {
       mark.textContent = state.absent.has(name) ? "" : "✓";
       refreshStepMeta();
       refreshBrandMeta();
+      refreshLatecomerButton();
     });
     els.attendanceList.appendChild(btn);
   });
@@ -174,6 +182,7 @@ function setAllAttendance(present) {
   renderAttendance();
   refreshStepMeta();
   refreshBrandMeta();
+  refreshLatecomerButton();
 }
 
 // --- constraint sets ---
@@ -622,6 +631,17 @@ function renderTable(group, idx, scale) {
   title.style.fontSize = `${titleFontPx}px`;
 
   surface.appendChild(title);
+
+  // If a group has more than 6 students (latecomers can push it over),
+  // render the extra names as a small overflow line inside the table.
+  if (group.students.length > 6) {
+    const overflow = document.createElement("div");
+    overflow.className = "td-table-overflow";
+    overflow.textContent = `+ ${group.students.slice(6).join(", ")}`;
+    overflow.style.fontSize = `${Math.max(8, Math.min(12, Math.min(tableW, tableH) * 0.07))}px`;
+    surface.appendChild(overflow);
+  }
+
   wrap.appendChild(surface);
 
   const layout = seatLayout(group.students.length);
@@ -751,10 +771,127 @@ function makeGroups() {
   state.lastResult = groups;
   renderClassroom(groups);
   els.reshuffleBtn.disabled = false;
+  refreshLatecomerButton();
   return true;
 }
 
 function reshuffle() { makeGroups(); }
+
+// --- latecomers ---
+// Drop a list of newly-arrived students into existing groups, putting
+// each into the smallest group with the fewest constraint conflicts.
+// Tied sizes prefer groups whose members don't share a constraint set
+// with the latecomer.
+function placeLatecomers(latecomers) {
+  if (!state.lastResult || latecomers.length === 0) return state.lastResult;
+  const groups = state.lastResult.map((g) => ({ ...g, students: [...g.students] }));
+
+  const studentSets = new Map();
+  state.constraintSets.forEach((cs, idx) => {
+    cs.members.forEach((m) => {
+      if (!studentSets.has(m)) studentSets.set(m, []);
+      studentSets.get(m).push(idx);
+    });
+  });
+  const conflictsWith = (group, candidate) => {
+    const candSets = studentSets.get(candidate);
+    if (!candSets) return 0;
+    let c = 0;
+    for (const m of group.students) {
+      const mSets = studentSets.get(m);
+      if (!mSets) continue;
+      for (const cs of candSets) if (mSets.includes(cs)) c++;
+    }
+    return c;
+  };
+
+  for (const latecomer of latecomers) {
+    const minSize = Math.min(...groups.map((g) => g.students.length));
+    let bestIdx = -1;
+    let bestConflicts = Infinity;
+    for (let i = 0; i < groups.length; i++) {
+      if (groups[i].students.length !== minSize) continue;
+      const c = conflictsWith(groups[i], latecomer);
+      if (c < bestConflicts) {
+        bestIdx = i;
+        bestConflicts = c;
+      }
+    }
+    if (bestIdx === -1) bestIdx = 0;
+    groups[bestIdx].students.push(latecomer);
+  }
+  return groups;
+}
+
+function refreshLatecomerButton() {
+  const hasGroups = !!(state.lastResult && state.lastResult.length > 0);
+  const hasAbsent = state.absent.size > 0;
+  els.addLatecomerBtn.disabled = !(hasGroups && hasAbsent);
+}
+
+let selectedLatecomers = new Set();
+
+function renderLatecomerList() {
+  els.latecomerList.innerHTML = "";
+  const absent = [...state.absent].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" })
+  );
+  if (absent.length === 0) {
+    els.latecomerEmpty.hidden = false;
+    els.latecomerHint.hidden = true;
+    els.confirmLatecomerBtn.disabled = true;
+    return;
+  }
+  els.latecomerEmpty.hidden = true;
+  els.latecomerHint.hidden = false;
+
+  absent.forEach((name) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "att-chip absent";
+
+    const mark = document.createElement("span");
+    mark.className = "att-mark";
+
+    const label = document.createElement("span");
+    label.className = "att-name";
+    label.textContent = name;
+
+    btn.appendChild(mark);
+    btn.appendChild(label);
+    btn.addEventListener("click", () => {
+      if (selectedLatecomers.has(name)) {
+        selectedLatecomers.delete(name);
+        btn.classList.add("absent");
+        mark.textContent = "";
+      } else {
+        selectedLatecomers.add(name);
+        btn.classList.remove("absent");
+        mark.textContent = "✓";
+      }
+      els.confirmLatecomerBtn.disabled = selectedLatecomers.size === 0;
+    });
+    els.latecomerList.appendChild(btn);
+  });
+  els.confirmLatecomerBtn.disabled = true;
+}
+
+function openLatecomerDialog() {
+  selectedLatecomers = new Set();
+  renderLatecomerList();
+  els.latecomerDialog.showModal();
+}
+
+function confirmLatecomers() {
+  const names = [...selectedLatecomers];
+  if (names.length === 0) return;
+  state.lastResult = placeLatecomers(names);
+  names.forEach((n) => state.absent.delete(n));
+  renderClassroom(state.lastResult);
+  refreshBrandMeta();
+  refreshLatecomerButton();
+  els.latecomerDialog.close();
+}
 
 function openSetup() { els.setupDialog.showModal(); }
 function closeSetup() { els.setupDialog.close(); }
@@ -762,6 +899,8 @@ function closeSetup() { els.setupDialog.close(); }
 // --- wire up ---
 els.setupBtn.addEventListener("click", openSetup);
 els.reshuffleBtn.addEventListener("click", reshuffle);
+els.addLatecomerBtn.addEventListener("click", openLatecomerDialog);
+els.confirmLatecomerBtn.addEventListener("click", confirmLatecomers);
 els.fullscreenBtn.addEventListener("click", () => {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
   else document.exitFullscreen?.();
@@ -800,6 +939,7 @@ els.clearRosterBtn.addEventListener("click", () => {
   renderEditor();
   refreshStepMeta();
   refreshBrandMeta();
+  refreshLatecomerButton();
   setActiveTab(0);
 });
 
@@ -812,15 +952,22 @@ els.makeGroupsBtn.addEventListener("click", () => {
   if (makeGroups()) closeSetup();
 });
 
-// Re-fit the room and re-render the layout when the page resizes.
-let resizeRaf = 0;
-window.addEventListener("resize", () => {
-  if (resizeRaf) cancelAnimationFrame(resizeRaf);
-  resizeRaf = requestAnimationFrame(() => {
+// Re-fit the room and re-render the layout whenever the available
+// space changes — window resize, fullscreen transitions, etc. A
+// ResizeObserver on the page element catches them all reliably; the
+// rAF debounce avoids thrashing during continuous resizes.
+let refitRaf = 0;
+function scheduleRefit() {
+  if (refitRaf) cancelAnimationFrame(refitRaf);
+  refitRaf = requestAnimationFrame(() => {
     fitRoom();
     if (state.lastResult) renderClassroom(state.lastResult);
   });
-});
+}
+const pageResizeObserver = new ResizeObserver(scheduleRefit);
+pageResizeObserver.observe(els.page);
+window.addEventListener("resize", scheduleRefit);
+document.addEventListener("fullscreenchange", scheduleRefit);
 
 // Initial paint
 setActiveTab(0);
@@ -828,6 +975,7 @@ renderSizePills();
 renderOrientationPills();
 refreshStepMeta();
 refreshBrandMeta();
+refreshLatecomerButton();
 renderAttendance();
 renderSetList();
 renderEditor();
